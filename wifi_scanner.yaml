@@ -1,0 +1,49 @@
+esphome:
+  name: wifi-scanner
+  platform: ESP32
+  board: esp32dev
+
+wifi:
+  ssid: "YourSSID"
+  password: "YourPassword"
+  # Fast reconnect settings
+  power_save_mode: none
+
+external_components:
+  - source:
+      type: local
+      path: components
+
+wifi_scanner:
+  id: scanner
+  scan_duration: 5s        # scan for 5 seconds
+  report_interval: 60s     # every 60 seconds
+  reconnect_wait: 10s      # wait up to 10s to reconnect
+
+# Publish found devices to HA
+api:
+  on_client_connected:
+    - logger.log: "HA connected"
+
+mqtt:
+  broker: !secret mqtt_broker
+  on_message:
+    - topic: esphome/scanner/devices
+
+text_sensor:
+  - platform: template
+    name: "Last Detected Device"
+    id: last_device
+
+sensor:
+  - platform: template
+    name: "Device Count"
+    id: device_count
+    accuracy_decimals: 0
+
+interval:
+  - interval: 60s
+    then:
+      - sensor.template.publish:
+          id: device_count
+          state: !lambda "return id(scanner).get_device_count();"j8
