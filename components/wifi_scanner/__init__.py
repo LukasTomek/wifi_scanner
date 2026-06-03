@@ -12,12 +12,14 @@ WiFiScannerComponent = wifi_scanner_ns.class_(
 CONF_SCAN_DURATION = "scan_duration"
 CONF_REPORT_INTERVAL = "report_interval"
 CONF_RECONNECT_WAIT = "reconnect_wait"
+CONF_STABILIZE_WAIT = "stabilize_wait"
 
 CONFIG_SCHEMA = cv.Schema({
     cv.GenerateID(): cv.declare_id(WiFiScannerComponent),
     cv.Optional(CONF_SCAN_DURATION, default="5s"): cv.time_period,
     cv.Optional(CONF_REPORT_INTERVAL, default="60s"): cv.time_period,
     cv.Optional(CONF_RECONNECT_WAIT, default="10s"): cv.time_period,
+    cv.Optional(CONF_STABILIZE_WAIT, default="3s"): cv.time_period,
 }).extend(cv.COMPONENT_SCHEMA)
 
 async def to_code(config):
@@ -32,4 +34,7 @@ async def to_code(config):
     ))
     cg.add(var.set_reconnect_wait(
         config[CONF_RECONNECT_WAIT].total_milliseconds
+    ))
+    cg.add(var.set_stabilize_wait(
+        config[CONF_STABILIZE_WAIT].total_milliseconds
     ))

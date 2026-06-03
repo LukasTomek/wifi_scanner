@@ -47,6 +47,15 @@ void WiFiScannerComponent::loop() {
             }
             break;
 
+        case State::STABILIZING:
+            // Wait for WiFi/MQTT/HA to fully settle
+            if (now - state_start_ >= stabilize_wait_) {
+                ESP_LOGI(TAG, "Stable, reporting now...");
+                state_ = State::REPORTING;
+                state_start_ = now;
+            }
+            break;
+            
         case State::REPORTING:
             report_devices_();
             state_ = State::CONNECTED;

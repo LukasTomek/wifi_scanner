@@ -36,6 +36,7 @@ private:
         CONNECTED,      // Normal WiFi operation
         SCANNING,       // Promiscuous mode active
         RECONNECTING,   // Rejoining WiFi after scan
+        STABILIZING,    // Wait after reconnect before reporting
         REPORTING,      // Sending results to HA
     };
 
@@ -46,6 +47,8 @@ private:
     void stop_scan_();
     void reconnect_();
     void report_devices_();
+    
+    void set_stabilize_wait(uint32_t ms) { stabilize_wait_ = ms; }
 
     CallbackManager<void(std::string, int)> on_device_found_;
     std::map<std::string, DeviceInfo> devices_;
@@ -53,6 +56,7 @@ private:
     State state_{State::CONNECTED};
     uint32_t state_start_{0};
 
+    uint32_t stabilize_wait_{3000};     // 3s default
     uint32_t scan_duration_{5000};      // 5s scanning
     uint32_t report_interval_{60000};   // scan every 60s
     uint32_t reconnect_wait_{10000};    // 10s to reconnect
