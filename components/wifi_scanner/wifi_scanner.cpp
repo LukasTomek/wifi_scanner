@@ -36,10 +36,9 @@ void WiFiScannerComponent::loop() {
             break;
 
         case State::RECONNECTING:
-            // Wait for WiFi to reconnect
             if (wifi::global_wifi_component->is_connected()) {
-                ESP_LOGI(TAG, "WiFi reconnected, reporting...");
-                state_ = State::REPORTING;
+                ESP_LOGI(TAG, "WiFi reconnected, stabilizing...");
+                state_ = State::STABILIZING;
                 state_start_ = now;
             } else if (now - state_start_ >= reconnect_wait_) {
                 ESP_LOGW(TAG, "Reconnect timeout, retrying...");
@@ -55,7 +54,7 @@ void WiFiScannerComponent::loop() {
                 state_start_ = now;
             }
             break;
-            
+
         case State::REPORTING:
             report_devices_();
             state_ = State::CONNECTED;
