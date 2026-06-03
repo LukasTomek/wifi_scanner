@@ -24,6 +24,7 @@ public:
     void set_scan_duration(uint32_t ms) { scan_duration_ = ms; }
     void set_report_interval(uint32_t ms) { report_interval_ = ms; }
     void set_reconnect_wait(uint32_t ms) { reconnect_wait_ = ms; }
+    void set_stabilize_wait(uint32_t ms) { stabilize_wait_ = ms; }
 
     void add_on_device_found_callback(std::function<void(std::string, int)> cb) {
         on_device_found_.add(std::move(cb));
@@ -47,8 +48,6 @@ private:
     void stop_scan_();
     void reconnect_();
     void report_devices_();
-    
-    void set_stabilize_wait(uint32_t ms) { stabilize_wait_ = ms; }
 
     CallbackManager<void(std::string, int)> on_device_found_;
     std::map<std::string, DeviceInfo> devices_;
