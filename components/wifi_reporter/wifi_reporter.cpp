@@ -22,19 +22,15 @@ void WiFiReporterComponent::loop() {
     }
 }
 
-void WiFiReporterComponent::request_ota() {
-    ESP_LOGI(TAG, "Sending OTA request to scanner");
-    ota_pending_ = true;
-    this->write_str("CMD:OTA\n");
-    on_ota_status_.call("requesting");
-}
+void WiFiReporterComponent::request_wifi_on() {
+    ESP_LOGI(TAG, "Asking scanner to connect WiFi");
+    this->write_str("CMD:WIFI_ON\n");
+    on_wifi_status_.call("connecting");
 
-void WiFiReporterComponent::cancel_ota() {
-    ESP_LOGI(TAG, "Cancelling OTA");
-    ota_pending_ = false;
-    this->write_str("CMD:CANCEL_OTA\n");
-    on_ota_status_.call("cancelled");
-}
+void WiFiReporterComponent::request_wifi_off() {
+    ESP_LOGI(TAG, "Asking scanner to disconnect WiFi");
+    this->write_str("CMD:WIFI_OFF\n");
+    on_wifi_status_.call("off");
 
 void WiFiReporterComponent::process_line_(const std::string &line) {
     if (line.empty()) return;
@@ -59,16 +55,10 @@ void WiFiReporterComponent::process_line_(const std::string &line) {
     } else if (line == "END") {
         on_scan_complete_.call(received_devices_);
 
-    } else if (line.rfind("OTA:", 0) == 0) {
-        std::string status = line.substr(4);
-        ESP_LOGI(TAG, "OTA status: %s", status.c_str());
-        on_ota_status_.call(status);
-
-        // Auto turn off switch when done/failed/timeout
-        if (status == "DONE" || status == "FAILED" ||
-            status == "TIMEOUT" || status == "CANCELLED") {
-            ota_pending_ = false;
-        }
+    } else if (line.rfind("WIFI:", 0) == 0) {
+        std::string status = line.substr(5);
+        ESP_LOGI(TAG, "Scanner WiFi status: %s", status.c_str());
+        on_wifi_status_.call(status);
     }
 }
 

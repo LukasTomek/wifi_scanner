@@ -13,6 +13,7 @@ WiFiScannerComponent *WiFiScannerComponent::instance_ = nullptr;
 void WiFiScannerComponent::setup() {
     instance_ = this;
 
+    // Start WiFi stack in null mode — no connection
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     esp_wifi_init(&cfg);
     esp_wifi_set_storage(WIFI_STORAGE_RAM);
@@ -59,40 +60,22 @@ void WiFiScannerComponent::loop() {
             break;
         }
 
-        case State::OTA_CONNECTING:
-            if (connect_wifi_()) {
-                ESP_LOGI(TAG, "WiFi connected, OTA ready");
-                this->write_str("OTA:READY\n");
-                state_ = State::OTA_READY;
-                state_start_ = now;
-            } else if (now - state_start_ >= 15000) {
-                // 15s connect timeout
-                ESP_LOGW(TAG, "WiFi connect failed");
-                this->write_str("OTA:FAILED\n");
-                state_ = State::OTA_RESUMING;
-                state_start_ = now;
+        case State::WIFI_CONNECTING:
+            // Wait for ESPHome wifi component to connect
+            if (wifi::global_wifi_component->is_connected()) {
+                ESP_LOGI(TAG, "WiFi connected, OTA available");
+                this->write_str("WIFI:READY\n");
+                state_ = State::WIFI_ON;
+            } else if (now - state_start_ > 30000) {
+                ESP_LOGW(TAG, "WiFi connect timeout");
+                this->write_str("WIFI:FAILED\n");
+                stop_wifi_();
             }
             break;
 
-        case State::OTA_READY:
-            // Let ESPHome OTA component do its work
-            App.loop();
-
-            // Timeout — no update came
-            if (now - state_start_ >= ota_timeout_) {
-                ESP_LOGW(TAG, "OTA timeout, resuming scan");
-                this->write_str("OTA:TIMEOUT\n");
-                state_ = State::OTA_RESUMING;
-                state_start_ = now;
-            }
-            break;
-
-        case State::OTA_TIMEOUT:
-            stop_ota_();
-            break;
-
-        case State::OTA_RESUMING:
-            stop_ota_();
+        case State::WIFI_ON:
+            // ESPHome handles everything — OTA, API, etc.
+            // Just wait for CMD:WIFI_OFF
             break;
     }
 }
@@ -101,18 +84,15 @@ void WiFiScannerComponent::process_uart_command_() {
     while (this->available()) {
         char c = this->read();
         if (c == '\n') {
-            ESP_LOGI(TAG, "UART cmd: %s", rx_buffer_.c_str());
+            ESP_LOGI(TAG, "CMD: %s", rx_buffer_.c_str());
 
-            if (rx_buffer_ == "CMD:OTA" && state_ == State::SCANNING) {
-                start_ota_();
-            } else if (rx_buffer_ == "CMD:CANCEL_OTA") {
-                if (state_ == State::OTA_READY ||
-                    state_ == State::OTA_CONNECTING) {
-                    ESP_LOGI(TAG, "OTA cancelled by reporter");
-                    this->write_str("OTA:CANCELLED\n");
-                    state_ = State::OTA_RESUMING;
-                    state_start_ = millis();
-                }
+            if (rx_buffer_ == "CMD:WIFI_ON" &&
+                state_ == State::SCANNING) {
+                start_wifi_();
+
+            } else if (rx_buffer_ == "CMD:WIFI_OFF" &&
+                       state_ == State::WIFI_ON) {
+                stop_wifi_();
             }
 
             rx_buffer_.clear();
@@ -122,29 +102,28 @@ void WiFiScannerComponent::process_uart_command_() {
     }
 }
 
-void WiFiScannerComponent::start_ota_() {
-    ESP_LOGI(TAG, "OTA requested, stopping scan");
-
+void WiFiScannerComponent::start_wifi_() {
+    ESP_LOGI(TAG, "Stopping scan, starting WiFi");
     esp_wifi_set_promiscuous(false);
-    esp_wifi_set_mode(WIFI_MODE_STA);
 
-    state_ = State::OTA_CONNECTING;
+    // Hand over to ESPHome wifi component
+    wifi::global_wifi_component->start();
+
+    state_ = State::WIFI_CONNECTING;
     state_start_ = millis();
+    this->write_str("WIFI:CONNECTING\n");
 }
 
-void WiFiScannerComponent::stop_ota_() {
-    ESP_LOGI(TAG, "Resuming scan mode");
+void WiFiScannerComponent::stop_wifi_() {
+    ESP_LOGI(TAG, "Stopping WiFi, resuming scan");
 
-    esp_wifi_disconnect();
+    wifi::global_wifi_component->disable();
+
     esp_wifi_set_mode(WIFI_MODE_NULL);
-
-    delay(500);
-
     esp_wifi_set_promiscuous(true);
     esp_wifi_set_promiscuous_rx_cb(&promiscuous_callback);
 
-    this->write_str("OTA:DONE\n");
-
+    this->write_str("WIFI:OFF\n");
     state_ = State::SCANNING;
     last_report_ = millis();
     ESP_LOGI(TAG, "Scanning resumed");
