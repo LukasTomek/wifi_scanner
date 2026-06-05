@@ -46,4 +46,4 @@ interval:
     then:
       - sensor.template.publish:
           id: device_count
-          state: !lambda "return id(scanner).get_device_count();"j8
+          state: !lambda "return id(scanner).get_device_count();"
