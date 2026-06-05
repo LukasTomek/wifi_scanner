@@ -1,6 +1,5 @@
 #include "wifi_scanner.h"
 #include "esphome/core/log.h"
-#include "esphome/components/wifi/wifi_component.h"
 
 namespace esphome {
 namespace wifi_scanner {
@@ -11,109 +10,93 @@ WiFiScannerComponent *WiFiScannerComponent::instance_ = nullptr;
 
 void WiFiScannerComponent::setup() {
     instance_ = this;
-    state_ = State::CONNECTED;
+
+    // No WiFi connection — raw promiscuous only
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    esp_wifi_init(&cfg);
+    esp_wifi_set_storage(WIFI_STORAGE_RAM);
+    esp_wifi_set_mode(WIFI_MODE_NULL);
+    esp_wifi_start();
+
+    esp_wifi_set_promiscuous(true);
+    esp_wifi_set_promiscuous_rx_cb(&promiscuous_callback);
+
+    // Scan all channels by setting channel to 0 (auto hop)
+    wifi_promiscuous_filter_t filter = {
+        .filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT |
+                       WIFI_PROMIS_FILTER_MASK_DATA
+    };
+    esp_wifi_set_promiscuous_filter(&filter);
+
+    ESP_LOGI(TAG, "Scanner ready, sending over UART");
     last_report_ = millis();
-    ESP_LOGI(TAG, "WiFi Scanner ready (time-sliced mode)");
 }
 
 void WiFiScannerComponent::loop() {
     uint32_t now = millis();
 
-    switch (state_) {
+    // Hop WiFi channels manually to catch all devices
+    static uint8_t channel = 1;
+    static uint32_t last_hop = 0;
+    if (now - last_hop > 200) {  // hop every 200ms
+        channel = (channel % 13) + 1;
+        esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
+        last_hop = now;
+    }
 
-        case State::CONNECTED:
-            // Wait for next scan window
-            if (now - last_report_ >= report_interval_) {
-                start_scan_();
-            }
-            break;
-
-        case State::SCANNING:
-            // Scan for scan_duration_ ms then stop
-            if (now - state_start_ >= scan_duration_) {
-                stop_scan_();
-            }
-            break;
-
-        case State::RECONNECTING:
-            if (wifi::global_wifi_component->is_connected()) {
-                ESP_LOGI(TAG, "WiFi reconnected, stabilizing...");
-                state_ = State::STABILIZING;
-                state_start_ = now;
-            } else if (now - state_start_ >= reconnect_wait_) {
-                ESP_LOGW(TAG, "Reconnect timeout, retrying...");
-                reconnect_();
-            }
-            break;
-
-        case State::STABILIZING:
-            // Wait for WiFi/MQTT/HA to fully settle
-            if (now - state_start_ >= stabilize_wait_) {
-                ESP_LOGI(TAG, "Stable, reporting now...");
-                state_ = State::REPORTING;
-                state_start_ = now;
-            }
-            break;
-
-        case State::REPORTING:
-            report_devices_();
-            state_ = State::CONNECTED;
-            last_report_ = now;
-            break;
+    // Periodically send collected devices over UART
+    if (now - last_report_ >= report_interval_) {
+        send_devices_over_uart_();
+        devices_.clear();
+        last_report_ = now;
     }
 }
 
-void WiFiScannerComponent::start_scan_() {
-    ESP_LOGI(TAG, "Starting scan, disconnecting WiFi...");
+void WiFiScannerComponent::send_devices_over_uart_() {
+    if (devices_.empty()) {
+        this->write_str("SCAN:0\n");
+        return;
+    }
 
-    // Disconnect WiFi but keep stack alive
-    esp_wifi_disconnect();
-    esp_wifi_set_promiscuous(true);
-    esp_wifi_set_promiscuous_rx_cb(&promiscuous_callback);
+    // Send count first
+    char buf[64];
+    snprintf(buf, sizeof(buf), "SCAN:%d\n", devices_.size());
+    this->write_str(buf);
 
-    state_ = State::SCANNING;
-    state_start_ = millis();
-    ESP_LOGI(TAG, "Scanning...");
-}
-
-void WiFiScannerComponent::stop_scan_() {
-    ESP_LOGI(TAG, "Scan done, found %d devices, reconnecting...", 
-             devices_.size());
-
-    esp_wifi_set_promiscuous(false);
-    reconnect_();
-}
-
-void WiFiScannerComponent::reconnect_() {
-    esp_wifi_connect();
-    state_ = State::RECONNECTING;
-    state_start_ = millis();
-}
-
-void WiFiScannerComponent::report_devices_() {
-    ESP_LOGI(TAG, "=== Scan Results ===");
+    // Send each device
     for (auto &kv : devices_) {
-        ESP_LOGI(TAG, "MAC: %s  RSSI: %d  Last seen: %dms ago",
+        snprintf(buf, sizeof(buf), "DEV:%s,%d\n",
                  kv.second.mac.c_str(),
-                 kv.second.rssi,
-                 millis() - kv.second.last_seen);
-        on_device_found_.call(kv.second.mac, kv.second.rssi);
+                 kv.second.rssi);
+        this->write_str(buf);
+        delay(10);  // small gap so reporter can keep up
     }
-    ESP_LOGI(TAG, "====================");
-    devices_.clear();
+
+    this->write_str("END\n");
+    ESP_LOGI(TAG, "Sent %d devices over UART", devices_.size());
+}
+
+bool WiFiScannerComponent::is_valid_mac_(uint8_t *payload) {
+    // Skip broadcast
+    if (payload[10] == 0xFF) return false;
+    // Skip multicast
+    if (payload[10] & 0x01) return false;
+    // Skip null MAC
+    if (payload[10] == 0x00 && payload[11] == 0x00 &&
+        payload[12] == 0x00 && payload[13] == 0x00 &&
+        payload[14] == 0x00 && payload[15] == 0x00) return false;
+    return true;
 }
 
 void WiFiScannerComponent::promiscuous_callback(
         void *buf, wifi_promiscuous_pkt_type_t type) {
 
-    if (type != WIFI_PKT_MGMT && type != WIFI_PKT_DATA) return;
-
     wifi_promiscuous_pkt_t *pkt = (wifi_promiscuous_pkt_t *)buf;
     uint8_t *payload = pkt->payload;
     int rssi = pkt->rx_ctrl.rssi;
 
-    // Filter weak signals (far away / noise)
-    if (rssi < -90) return;
+    if (rssi < instance_->rssi_threshold_) return;
+    if (!instance_->is_valid_mac_(payload)) return;
 
     char mac[18];
     snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X",
@@ -121,14 +104,9 @@ void WiFiScannerComponent::promiscuous_callback(
              payload[13], payload[14], payload[15]);
 
     std::string mac_str(mac);
-
-    // Skip broadcast and multicast MACs
-    if (mac_str == "FF:FF:FF:FF:FF:FF") return;
-    if (payload[10] & 0x01) return;
-
     auto &dev = instance_->devices_[mac_str];
     dev.mac = mac_str;
-    dev.rssi = rssi;
+    dev.rssi = rssi;  // update with latest rssi
     dev.last_seen = millis();
 }
 
