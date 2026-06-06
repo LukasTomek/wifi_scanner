@@ -15,8 +15,8 @@ public:
     float get_setup_priority() const override { return setup_priority::LATE; }
 
     // Called from YAML switch
-    void request_ota();
-    void cancel_ota();
+    void request_wifi_on();
+    void request_wifi_off();
 
     void add_on_device_found_callback(std::function<void(std::string, int)> cb) {
         on_device_found_.add(std::move(cb));
@@ -38,7 +38,6 @@ private:
     std::string rx_buffer_;
     int expected_devices_{0};
     int received_devices_{0};
-    bool ota_pending_{false};
 };
 
 }  // namespace wifi_scanner
