@@ -1,7 +1,5 @@
 #include "wifi_scanner.h"
 #include "esphome/core/log.h"
-#include "esphome/core/application.h"
-#include "esp_wifi.h"
 
 namespace esphome {
 namespace wifi_scanner {
@@ -12,36 +10,23 @@ WiFiScannerComponent *WiFiScannerComponent::instance_ = nullptr;
 
 void WiFiScannerComponent::setup() {
     instance_ = this;
-
-    // Start WiFi stack in null mode — no connection
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    esp_wifi_init(&cfg);
-    esp_wifi_set_storage(WIFI_STORAGE_RAM);
-    esp_wifi_set_mode(WIFI_MODE_NULL);
-    esp_wifi_start();
-
-    esp_wifi_set_promiscuous(true);
-    esp_wifi_set_promiscuous_rx_cb(&promiscuous_callback);
-
-    wifi_promiscuous_filter_t filter = {
-        .filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT |
-                       WIFI_PROMIS_FILTER_MASK_DATA
-    };
-    esp_wifi_set_promiscuous_filter(&filter);
-
-    ESP_LOGI(TAG, "Scanner ready");
-    last_report_ = millis();
+    // WiFi is managed by ESPHome normally at boot
+    // Nothing to init here — just wait for commands
+    ESP_LOGI(TAG, "Scanner ready, WiFi mode (sniff off)");
 }
 
 void WiFiScannerComponent::loop() {
     uint32_t now = millis();
 
-    // Always check for incoming UART commands
     process_uart_command_();
 
     switch (state_) {
 
-        case State::SCANNING: {
+        case State::WIFI_ON:
+            // ESPHome handles WiFi, OTA, API normally
+            break;
+
+        case State::SNIFFING: {
             // Channel hopping
             static uint8_t channel = 1;
             static uint32_t last_hop = 0;
@@ -51,7 +36,7 @@ void WiFiScannerComponent::loop() {
                 last_hop = now;
             }
 
-            // Periodic UART report
+            // Periodic report over UART
             if (now - last_report_ >= report_interval_) {
                 send_devices_over_uart_();
                 devices_.clear();
@@ -60,22 +45,16 @@ void WiFiScannerComponent::loop() {
             break;
         }
 
-        case State::WIFI_CONNECTING:
-            // Wait for ESPHome wifi component to connect
+        case State::RECONNECTING:
             if (wifi::global_wifi_component->is_connected()) {
-                ESP_LOGI(TAG, "WiFi connected, OTA available");
+                ESP_LOGI(TAG, "WiFi reconnected");
                 this->write_str("WIFI:READY\n");
                 state_ = State::WIFI_ON;
             } else if (now - state_start_ > 30000) {
-                ESP_LOGW(TAG, "WiFi connect timeout");
-                this->write_str("WIFI:FAILED\n");
-                stop_wifi_();
+                ESP_LOGW(TAG, "Reconnect timeout, retrying");
+                wifi::global_wifi_component->start();
+                state_start_ = now;
             }
-            break;
-
-        case State::WIFI_ON:
-            // ESPHome handles everything — OTA, API, etc.
-            // Just wait for CMD:WIFI_OFF
             break;
     }
 }
@@ -86,13 +65,13 @@ void WiFiScannerComponent::process_uart_command_() {
         if (c == '\n') {
             ESP_LOGI(TAG, "CMD: %s", rx_buffer_.c_str());
 
-            if (rx_buffer_ == "CMD:WIFI_ON" &&
-                state_ == State::SCANNING) {
-                start_wifi_();
+            if (rx_buffer_ == "CMD:SNIFF_ON" &&
+                state_ == State::WIFI_ON) {
+                start_sniff_();
 
-            } else if (rx_buffer_ == "CMD:WIFI_OFF" &&
-                       state_ == State::WIFI_ON) {
-                stop_wifi_();
+            } else if (rx_buffer_ == "CMD:SNIFF_OFF" &&
+                       state_ == State::SNIFFING) {
+                stop_sniff_();
             }
 
             rx_buffer_.clear();
@@ -102,20 +81,14 @@ void WiFiScannerComponent::process_uart_command_() {
     }
 }
 
-void WiFiScannerComponent::start_wifi_() {
-    ESP_LOGI(TAG, "Stopping scan, starting WiFi");
-    esp_wifi_set_promiscuous(false);
+void WiFiScannerComponent::start_sniff_() {
+    ESP_LOGI(TAG, "Starting sniff, disconnecting WiFi");
 
-    // Hand over to ESPHome wifi component
-    wifi::global_wifi_component->start();
-
-    state_ = State::WIFI_CONNECTING;
-    state_start_ = millis();
-    this->write_str("WIFI:CONNECTING\n");
-}
-
-void WiFiScannerComponent::stop_wifi_() {
-    ESP_LOGI(TAG, "Stopping WiFi, resuming scan");
+    // Send remaining devices before going dark
+    if (!devices_.empty()) {
+        send_devices_over_uart_();
+        devices_.clear();
+    }
 
     wifi::global_wifi_component->disable();
 
@@ -123,18 +96,38 @@ void WiFiScannerComponent::stop_wifi_() {
     esp_wifi_set_promiscuous(true);
     esp_wifi_set_promiscuous_rx_cb(&promiscuous_callback);
 
-    this->write_str("WIFI:OFF\n");
-    state_ = State::SCANNING;
+    wifi_promiscuous_filter_t filter = {
+        .filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT |
+                       WIFI_PROMIS_FILTER_MASK_DATA
+    };
+    esp_wifi_set_promiscuous_filter(&filter);
+
+    state_ = State::SNIFFING;
     last_report_ = millis();
-    ESP_LOGI(TAG, "Scanning resumed");
+    this->write_str("SNIFF:ON\n");
+    ESP_LOGI(TAG, "Sniffing started");
+}
+
+void WiFiScannerComponent::stop_sniff_() {
+    ESP_LOGI(TAG, "Stopping sniff, reconnecting WiFi");
+
+    // Send final batch before reconnecting
+    if (!devices_.empty()) {
+        send_devices_over_uart_();
+        devices_.clear();
+    }
+
+    esp_wifi_set_promiscuous(false);
+    esp_wifi_set_mode(WIFI_MODE_NULL);
+
+    wifi::global_wifi_component->start();
+
+    state_ = State::RECONNECTING;
+    state_start_ = millis();
+    this->write_str("SNIFF:OFF\n");
 }
 
 void WiFiScannerComponent::send_devices_over_uart_() {
-    if (devices_.empty()) {
-        this->write_str("SCAN:0\n");
-        return;
-    }
-
     char buf[64];
     snprintf(buf, sizeof(buf), "SCAN:%d\n", devices_.size());
     this->write_str(buf);
@@ -148,6 +141,7 @@ void WiFiScannerComponent::send_devices_over_uart_() {
     }
 
     this->write_str("END\n");
+    ESP_LOGI(TAG, "Sent %d devices", devices_.size());
 }
 
 bool WiFiScannerComponent::is_valid_mac_(uint8_t *payload) {

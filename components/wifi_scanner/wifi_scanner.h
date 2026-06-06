@@ -28,16 +28,16 @@ public:
 
 private:
     enum class State {
-        SCANNING,
-        WIFI_CONNECTING,
-        WIFI_ON,        // ESPHome manages WiFi + OTA
+        WIFI_ON,        // default — WiFi connected, OTA available
+        SNIFFING,       // promiscuous mode, WiFi off
+        RECONNECTING,   // returning to WiFi after sniff
     };
 
     static void promiscuous_callback(void *buf, wifi_promiscuous_pkt_type_t type);
     static WiFiScannerComponent *instance_;
 
-    void start_wifi_();
-    void stop_wifi_();
+    void start_sniff_();
+    void stop_sniff_();
     void send_devices_over_uart_();
     void process_uart_command_();
     bool is_valid_mac_(uint8_t *payload);
@@ -45,7 +45,7 @@ private:
     std::map<std::string, DeviceInfo> devices_;
     std::string rx_buffer_;
 
-    State state_{State::SCANNING};
+    State state_{State::WIFI_ON};
     uint32_t state_start_{0};
 
     uint32_t report_interval_{30000};

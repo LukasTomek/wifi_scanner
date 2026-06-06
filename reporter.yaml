@@ -1,14 +1,14 @@
 switch:
   - platform: template
-    name: "Scanner WiFi / OTA"
-    id: scanner_wifi_switch
+    name: "Scanner Sniff Mode"
+    id: scanner_sniff_switch
     optimistic: false
     turn_on_action:
-      - lambda: "id(reporter).request_wifi_on();"
+      - lambda: "id(reporter).request_sniff_on();"
     turn_off_action:
-      - lambda: "id(reporter).request_wifi_off();"
+      - lambda: "id(reporter).request_sniff_off();"
 
 text_sensor:
   - platform: template
-    name: "Scanner WiFi Status"
-    id: scanner_wifi_status
+    name: "Scanner Status"
+    id: scanner_status
