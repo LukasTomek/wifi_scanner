@@ -33,7 +33,7 @@ private:
 
     CallbackManager<void(std::string, int)> on_device_found_;
     CallbackManager<void(int)> on_scan_complete_;
-    CallbackManager<void(std::string)> on_ota_status_;
+    CallbackManager<void(std::string)> on_wifi_status_;
 
     std::string rx_buffer_;
     int expected_devices_{0};
