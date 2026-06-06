@@ -24,8 +24,8 @@ public:
     void add_on_scan_complete_callback(std::function<void(int)> cb) {
         on_scan_complete_.add(std::move(cb));
     }
-    void add_on_ota_status_callback(std::function<void(std::string)> cb) {
-        on_ota_status_.add(std::move(cb));
+    void add_on_wifi_status_callback(std::function<void(std::string)> cb) {
+        on_wifi_status_.add(std::move(cb));
     }
 
 private:
