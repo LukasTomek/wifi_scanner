@@ -23,14 +23,14 @@ void WiFiReporterComponent::loop() {
 }
 
 void WiFiReporterComponent::request_wifi_on() {
-    ESP_LOGI(TAG, "Asking scanner to connect WiFi");
-    this->write_str("CMD:WIFI_ON\n");
+    ESP_LOGI(TAG, "Asking scanner to disconnect  WiFi");
+    this->write_str("CMD:SNIFF_ON\n");
     on_wifi_status_.call("connecting");
 }
 
 void WiFiReporterComponent::request_wifi_off() {
-    ESP_LOGI(TAG, "Asking scanner to disconnect WiFi");
-    this->write_str("CMD:WIFI_OFF\n");
+    ESP_LOGI(TAG, "Asking scanner to connect WiFi");
+    this->write_str("CMD:SNIFF_OFF\n");
     on_wifi_status_.call("off");
 }
 
