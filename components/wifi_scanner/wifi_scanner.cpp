@@ -129,21 +129,6 @@ void WiFiScannerComponent::stop_wifi_() {
     ESP_LOGI(TAG, "Scanning resumed");
 }
 
-bool WiFiScannerComponent::connect_wifi_() {
-    wifi_config_t wifi_config = {};
-    strncpy((char *)wifi_config.sta.ssid,
-            wifi_ssid_.c_str(), sizeof(wifi_config.sta.ssid));
-    strncpy((char *)wifi_config.sta.password,
-            wifi_password_.c_str(), sizeof(wifi_config.sta.password));
-
-    esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
-    esp_wifi_connect();
-
-    // Check connection status
-    wifi_ap_record_t ap_info;
-    return esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK;
-}
-
 void WiFiScannerComponent::send_devices_over_uart_() {
     if (devices_.empty()) {
         this->write_str("SCAN:0\n");
